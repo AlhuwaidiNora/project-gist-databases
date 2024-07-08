@@ -1,0 +1,130 @@
+import requests
+import sqlite3
+from datetime import datetime
+
+# Database schema
+CREATE_TABLE_GISTS = """
+CREATE TABLE IF NOT EXISTS gists (
+    id INTEGER PRIMARY KEY,
+    github_id TEXT,
+    url TEXT,
+    description TEXT,
+    created_at DATETIME,
+    updated_at DATETIME
+)
+"""
+
+# Gist class
+class Gist:
+    def __init__(self, github_id, url, description, created_at, updated_at):
+        self.github_id = github_id
+        self.url = url
+        self.description = description
+        self.created_at = created_at
+        self.updated_at = updated_at
+
+def create_database(db_file):
+    """Create SQLite database and gists table."""
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute(CREATE_TABLE_GISTS)
+    conn.commit()
+    conn.close()
+
+def import_gists_to_database(db_file, username, commit=True):
+    """
+    Fetch gists from GitHub API for a given username and insert into database.
+    """
+    url = f"https://api.github.com/users/{username}/gists"
+    response = requests.get(url)
+    gists_data = response.json()
+
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+
+    for gist in gists_data:
+        github_id = gist['id']
+        url = gist['html_url']
+        description = gist['description']
+        created_at = gist['created_at']
+        updated_at = gist['updated_at']
+
+        created_at_dt = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
+        updated_at_dt = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")
+
+        cursor.execute("""
+            INSERT INTO gists (github_id, url, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (github_id, url, description, created_at_dt, updated_at_dt))
+
+    if commit:
+        conn.commit()
+
+    conn.close()
+
+def search_gists(db_file, github_id=None, created_at=None, created_at__gt=None, created_at__gte=None):
+    """
+    Search gists in the database based on optional parameters.
+    """
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+
+    params = {}
+    query = """
+        SELECT github_id, url, description, created_at, updated_at
+        FROM gists
+        WHERE 1=1
+    """
+
+    if github_id:
+        query += " AND github_id = :github_id"
+        params['github_id'] = github_id
+
+    if created_at:
+        query += " AND date(created_at) = date(:created_at)"
+        params['created_at'] = created_at
+
+    if created_at__gt:
+        query += " AND datetime(created_at) > datetime(:created_at__gt)"
+        params['created_at__gt'] = created_at__gt
+
+    if created_at__gte:
+        query += " AND datetime(created_at) >= datetime(:created_at__gte)"
+        params['created_at__gte'] = created_at__gte
+
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+
+    gists = []
+    for result in results:
+        github_id, url, description, created_at, updated_at = result
+        gist = Gist(github_id, url, description, created_at, updated_at)
+        gists.append(gist)
+
+    conn.close()
+    return gists
+
+if __name__ == "__main__":
+    # Database file
+    db_file = "gists.db"
+
+    # Ensure database and table are created
+    create_database(db_file)
+
+    # Example: Import gists for a GitHub user (e.g., 'gvanrossum')
+    username = 'gvanrossum'
+    import_gists_to_database(db_file, username)
+
+    # Example: Search gists with optional parameters
+    # Replace with your search criteria
+    search_results = search_gists(db_file, github_id='1234567890', created_at__gt=datetime(2023, 1, 1))
+
+    # Print search results
+    for gist in search_results:
+        print(f"GitHub ID: {gist.github_id}")
+        print(f"URL: {gist.url}")
+        print(f"Description: {gist.description}")
+        print(f"Created At: {gist.created_at}")
+        print(f"Updated At: {gist.updated_at}")
+        print()
+
